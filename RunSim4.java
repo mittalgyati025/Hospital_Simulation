@@ -1,0 +1,912 @@
+import java.math.*;
+import java.util.*;
+import java.io.*;
+
+
+/* Nurse attends the alarm
+95% alarms are false and 5% alarms are true
+Nurse fatigue included
+Number of false alarms serviced by nurses - FalseAlarmsServiced);
+Number of false alarms dodged because of fatigue - DodgedFalseAlarm);
+*/
+
+public class RunSim4 {
+
+double totalNoInSys = 0;
+double totalNoInSysSq = 0;
+double totalNoInQ = 0;
+double totalNoInQSq = 0;
+int noCustInSys = 0; //keep track of # of customers in system
+int noCustInQ = 0;
+int noServComp = 0; //keep track of # of service completions
+int noServAb = 0; //keep track of # of service abandonments
+double totalTimeInSys = 0; //keep track of time in system I will use it to find average time in system
+double totalTimeInSysSq = 0; //keep track of second moment of time in system
+double totalTimeInQ = 0;
+int noMeetTarget = 0; //keep track of # of customers meeting the waiting time target
+double percmeetTarget = 0;
+
+double avgTimeInsystem;
+double varTimeInsystem;
+double avgTimeInQ;
+double avgNumberInSystem;	
+double varNumberInSystem;
+double avgNumberInQ;
+double varNumberInQ;
+
+int CustomerIDCnt = 1; //an id for every customer
+int ECustomerIDCnt = 1; //an id for every ext customer
+//double endTime = 17; //how long to run the simulation each day
+double endTime = 24; //how long to run the simulation each day
+int sysStatus = 0; //to check if the single server is busy
+int esysStatus = 0; //use this for H1
+static double lambda = 60; //change the function in getlambda if you need to change the parameters
+double extlambda=0;
+int extcalls=1802; //use this only for Heuristic 1
+double en=4; //number of servers for Heuristic 1
+double mu = 30; //average service rate across all days. Period is hour. Assuming only 2/3 of the workers work at this speed. But allowed to vary according to time
+double emu = 46.154;
+double mua = 40; //rate per period (hour) assuming people abandon after 1.5 minutes But allowed to vary according to time
+double extmua = 0.1;
+double n = 1; //no of servers
+int tweek = 0;
+int endweek = 10;
+int tday = 0;
+double tnow = 1; //nothing is assumed to happen in the first hour 6 to 7 AM slot.
+//double tnow2 = 0; //creating this to reset tnow during shift transitions. Check shift change method
+int startcheck = 0; //for signaling phantom shifts
+double targetWait = 0.02;
+double targetPerc = 0.7;
+int nperiods = 6; //No of periods in a day
+double hours = 24; //No of hours in a day
+double stime = 3; //No. of hours in each period
+int day = 0;
+int shiftno = 0;
+double timeinpod = 0.7;//Average percentage of time a server is available to take calls pertaining to the pod (1-vacation time)
+//double[][] nservers = new double [7][nperiods];
+//double[][] marrival = new double [7][nperiods];
+//int[][] nservers = { {}  };
+
+int SwitchOnHours = 1; //nurse fatigue hour
+int noOfWorkingNurse;
+
+static int noOfPatients = 100;
+//change to 3 from 25 in order to test patient queue functionality------------------------GM
+static int noOfNurse = 3;
+
+static double[] arrRate = {199.8066667,62.5};
+//static double[] arrRate = {771,62.5};
+Random rand = new Random();
+
+int TrueAlarmMissed = 0;
+int DodgedFalseAlarm = 0;
+int FalseAlarmsServiced = 0;
+int TrueAlarms = 0;
+int FalseAlarms = 0;
+int FalseAlarmThreshold = 3;
+int maxNoOfAlarmsInQ = 0;
+int avgNoOfAlarmsInQ = 0;
+int noPatInQ = 0;
+double TrueAlarmProsTime = 0.00165;
+double FalseAlarmProsTime = 0.000825;
+
+int TechAlarms = 0;
+int NonTechAlarms = 0;
+
+//5 Alarm sub types and probabilities of each to occur
+int noOfAlarmSubType = 5;
+double alarmSubTypeProb;
+
+double alarmSubTypeProb1 = 0.20;
+double alarmSubTypeProb2 = 0.40;
+double alarmSubTypeProb3 = 0.60;
+double alarmSubTypeProb4 = 0.80;
+
+//this is where we construct the simulator
+public RunSim4()
+{
+	
+}
+public static void main(String args[])
+{
+
+	WritetoCSV loWriteToCSV = new WritetoCSV(); //write all the details in a CSV file for checking
+	RunSim4 meclass = new RunSim4();
+	//ArrayList<ArrayList<Double>> marrival = meclass.generateCsvFileArr("ArrRate.csv");
+	//ArrayList<ArrayList<Double>> earrival = meclass.generateCsvFileArr("ExtCalls.csv");
+	
+	meclass.percmeetTarget = 0; //Reset 
+	File patFile1 = new File("Data1.csv");
+//	String servFile = "Servers.csv";
+	File patFile = meclass.initiateFile(patFile1); //Just create the first row in data file
+	EventQ eventq = new EventQ(); //this is a vector of current events, I will delete past events once it is taken
+	PatientQ patq = new PatientQ(); //this is a vector of queue events
+	NurseQ nurseq = new NurseQ(); //this is a vector of servers
+
+
+	//for (meclass.tday=0; meclass.tday<1; meclass.tday++)
+	for (meclass.tday=0; meclass.tday<10; meclass.tday++)
+		{
+
+			Patient[] pat = new Patient[noOfPatients];
+			for(int i=0; i< noOfPatients; i++) {
+				pat[i] = new Patient(i);
+			}
+
+			Nurse[] nur = new Nurse[noOfNurse];
+			for(int i=0; i< noOfNurse; i++) {
+				nur[i] = new Nurse(i);
+			}
+			
+			meclass.noOfWorkingNurse = 0;
+
+			// Create end Event. It is to signify that this the last event to be handled that day---------------------- GM
+
+			meclass.generateEndEvent(eventq); //Make the end customer Id to be -1 for differentiating
+			lambda = 77100/24;
+			//lambda = arrRate[meclass.tday];
+			System.out.println("Lambda" +lambda);
+			//Create first arrival event in queue-------------------------GM
+			Event curreve = meclass.generateArrivalEvent(eventq,pat); //Generate an arrival Event refer method below
+			System.out.println("Current Event Type" +curreve.objsType);
+			System.out.println("Current Event Time" +curreve.objdTime);
+			System.out.println("Tday" +meclass.tday);
+
+			//checked------decided to delete as of now----------GM
+			while (meclass.startcheck == 0)
+			{
+				System.out.println("Inside startcheck 0");
+				if (curreve != null){meclass.startcheck = 1;}
+
+//				else if (curreve2 != null){meclass.startcheck = 1;}
+				/* else {
+					meclass.tnow = meclass.tnow + meclass.stime;
+					meclass.ShiftChangeEvent(servq, nservers, marrival, earrival, servtime, abantime, eventq, custq);	
+//					meclass.ShiftChangeEvent(servq, nservers, marrival, earrival, servtime, abantime, eventq, custq, ecustq);	
+					eventq.eraseEvent();
+					curreve = meclass.generateArrivalEvent(eventq); //Generate an arrival Event refer method below
+//					curreve2 = meclass.generateExtArrivalEvent(eventq); //Generate an ext arrival Event refer method below
+//					System.out.println("tnow = " +meclass.tnow);
+					//*** Added the following for H1
+					if(meclass.day==0 && meclass.shiftno==1) 
+					{
+					meclass.generateExtArrivalEvent(eventq); //Generate an ext arrival Event refer method below
+					meclass.startcheck = 1;
+					}
+					//** End addition
+				} */
+			}
+			// this is the main while loop of the simulation which runs from starting to end---------------------GM
+			while(meclass.tnow < meclass.endTime)
+			{
+				System.out.println("Inside get event");
+				// here we get the first event in the queue which is the event with most recent time-------------------GM
+				Event NextEvent = eventq.getfirstevent();
+	          //System.out.println("tnow = " +meclass.tnow);
+                //Once we pick the arrival event from the queue we erased it from the event queue----------------------GM
+				eventq.eraseEvent();	
+				double deltaT = NextEvent.objdTime - meclass.tnow;//how much time has passed since last event
+				meclass.tnow = NextEvent.objdTime; //Update tnow
+				meclass.updateStats(deltaT);//update my statistics --should check
+				
+				System.out.println("Object Type:" +NextEvent.objsType);
+				// Now on depending on event type we decide which if block to execute (arrival/departure)---------------GM
+				if(NextEvent.objsType.equalsIgnoreCase("arrival"))
+				{
+					System.out.println("Inside arrival");
+					// this is the call to the arrival event importnat function-------------------GM
+					meclass.arrivalEvent(patq, NextEvent, eventq, nur, pat);
+					////gyati
+					//for(int i=0;i<eventq.getsize();i++)
+					//	System.out.println("\nEQ after arrival event : type " +eventq.getithevent(i).objsType + " , id: \n" + eventq.getithevent(i).PatientID);
+					//
+				//	System.out.println("Someone arrived");
+				}
+				
+				/*if(NextEvent.objsType.equalsIgnoreCase("Extarrival"))
+				{
+					meclass.extarrivalEvent(NextEvent, eventq, eservq);	
+//					meclass.extarrivalEvent(ecustq, NextEvent, eventq, servq);	
+				//	System.out.println("Someone arrived");
+				}
+				*/
+				// here we call the departure event function
+				if(NextEvent.objsType.equalsIgnoreCase("departure"))
+				{
+					System.out.println("Inside departure");
+					meclass.departureEvent(patq, NextEvent, eventq, patFile, loWriteToCSV, nur, pat);
+					//gyati
+					//for(int i=0;i<eventq.getsize();i++)
+					//	System.out.println("\nEQ : after departure event " +eventq.getithevent(i).objsType + " , id: \n" + eventq.getithevent(i).PatientID);
+//		/////////////////////
+//					meclass.departureEvent(custq, ecustq, NextEvent, eventq, custFile, loWriteToCSV, servq);
+				//	System.out.println("Someone departed");
+				}	
+				
+				/*if(NextEvent.objsType.equalsIgnoreCase("abandon"))
+				{
+					meclass.abandonEvent(custq, NextEvent, eventq, custFile, loWriteToCSV);	
+				//	System.out.println("Someone abandoned at " +meclass.tnow);
+				}	
+				*/
+				// finally we upate TNow to end time in order to quit this while loop------------------GM
+				if(NextEvent.objsType.equalsIgnoreCase("end"))
+				{
+	//				meclass.endEvent(ecustq);	//Remove for H1
+					meclass.tnow = meclass.endTime; //If we reach end of vector need to quit
+				}
+				System.out.println("tnow is:" +meclass.tnow);
+			}
+			meclass.tnow=1;
+			if(eventq.getsize()>0)
+			{
+				System.out.println("Check because the the eventq size is " +eventq.getsize() );
+				Event LastEvent = eventq.getfirstevent();
+				System.out.println("The event is " +LastEvent.objsType);
+				System.out.println("The event is " +LastEvent.objdTime);
+			}
+			if(patq.size()>0){System.out.println("Check because the the custq size is " +patq.size() );}
+		}
+	System.out.println("Total number of Service Completions " + meclass.noServComp);
+	System.out.println("Total number of True Alarms "+ meclass.TrueAlarms);
+	System.out.println("Total number of False Alarms "+ meclass.FalseAlarms);
+	System.out.println("Number of True Alarms Missed "+ meclass.TrueAlarmMissed);
+	System.out.println("Number of False Alarms Serviced "+ meclass.FalseAlarmsServiced);
+	System.out.println("Number of False Alarms Dodged "+ meclass.DodgedFalseAlarm);
+	
+	System.out.println("Maximum Number of Alarms in Queue  "+ meclass.maxNoOfAlarmsInQ);
+	System.out.println("Average Number of Alarms in Queue for 2 days  "+ meclass.noPatInQ/48);
+	
+	}
+	
+	//Print the update status
+	//meclass.StatsPrint();
+//	meclass.n++;
+	//Reset all values again
+//	meclass.initialize();
+//	}	
+
+/**
+ * This method is to initiate a new file
+ * 
+ * 
+ * 
+ */
+
+File initiateFile(File sampleFile)
+{
+
+try
+{
+//Delete and create the file again
+if(sampleFile.exists())
+{
+	sampleFile.delete();
+	sampleFile.createNewFile();
+}
+FileWriter sampleFileWriter = new FileWriter(sampleFile);
+//Creating column headers in the file
+sampleFileWriter.append("Day");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Patient ID");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Patient Status");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Arrival Time");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Alarm Status");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Alarm Type");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Alarm Main Type");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Alarm Sub Type");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Number of Technical True Alarms");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Number of Technical False Alarms");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Number of Non Techinical True Alarms");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Number of Non Techinical False Alarms");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Wait Time");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Departure Time");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Time Alarm is Switched Off");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Number of False Alarms");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Number of True Alarms");
+sampleFileWriter.append(',');	
+sampleFileWriter.append("Attended Nurse ID");
+sampleFileWriter.append(',');
+sampleFileWriter.append("No.of True Alarms visible to Nurse");
+sampleFileWriter.append(',');
+sampleFileWriter.append("No.of False Alarms visible to Nurse");
+sampleFileWriter.append(',');
+sampleFileWriter.append("No.Of Times Flipped to On");
+sampleFileWriter.append(',');
+sampleFileWriter.append("No.Of Times Flipped to Off");
+sampleFileWriter.append(',');
+sampleFileWriter.append("Time in System");
+sampleFileWriter.append('\n');
+
+sampleFileWriter.flush();
+    
+//Better to close the file 
+sampleFileWriter.close();
+}
+catch(IOException e)
+{
+     e.printStackTrace();
+} 
+return sampleFile;
+}
+
+/**
+ * This method is to read a csv file
+ * 
+ * 
+ * 
+*/
+
+private ArrayList<ArrayList<Double>> generateCsvFileArr(String fileName){
+	  BufferedReader br = null;
+	  int lineCnt = 0;
+	  String sCurrentLine;
+	  ArrayList<ArrayList<Double>> arrlist = new ArrayList<ArrayList<Double>>();
+	   
+	  try {
+	         
+	        br = new BufferedReader(new FileReader(fileName));
+	        while ((sCurrentLine = br.readLine()) != null) {
+	        if(lineCnt >= 1)
+	        {
+	        String[] values = sCurrentLine.split(",");
+	        ArrayList<Double> rows = new ArrayList<Double>();
+	          for(int incr = 0;incr < values.length;incr++)
+	          {
+	        if(incr >= 1)
+	        {
+	        rows.add(new Double(values[incr]));
+	        }
+	          }
+	        arrlist.add(rows);
+	  //      System.out.println(values[1]);
+	        }
+	        else
+	        {
+	        //System.out.println(sCurrentLine);
+	            lineCnt += 1;
+	        }
+	        }
+//	        return servers;
+	  }
+	  catch(IOException e)
+	  {
+	  e.printStackTrace();
+	  }
+	  finally {
+	try {
+	if (br != null)
+	br.close();
+	} catch (IOException ex) {
+	ex.printStackTrace();
+	}
+	}
+//	  System.out.println(servers); 
+	  return arrlist;
+	  
+	  }
+
+/**
+ * This method is to generate a new arrival event class
+ * 
+ * 
+ * 
+ */
+
+private Event generateArrivalEvent(EventQ eq,Patient pat[])
+{
+	if(lambda>0)
+	{
+		//double TimeArrival  = (- (Math.log(1 - Math.random()) /  lambda))/25 + tnow;
+		double TimeArrival  = (- (Math.log(1 - Math.random()) /  lambda)) + tnow;
+	//	System.out.println("Time arrival " +TimeArrival );
+
+        // first we allocate an event type and we record the arrival time of the event--------------GM
+		Event EventObj = new Event("arrival", TimeArrival);
+		int  n = rand.nextInt(noOfPatients);
+		System.out.println("Before while");
+		while(1==1) {
+			if (pat[n].patientStatus == 1) {
+				n = rand.nextInt(noOfPatients);
+			}
+			else
+				break;			
+		}
+		System.out.println("After while");
+		
+		System.out.println("Patient ID is:" +n);
+		System.out.println("Lambda is:" +lambda);
+		
+		// pat[n].patientStatus = 1; Commenting to change when patient is actually being treated
+		pat[n].arrivalTime = TimeArrival; // set arrival time randomly  of the new patient ----------------------GM
+		//if (pat[n].arrivalTime < pat[n].firstArrivalTime) {
+		//	pat[n].firstArrivalTime = pat[n].arrivalTime;
+		//}
+		EventObj.PatientID = n;
+		
+		//pat[n].alarmSubType = (int) (Math.random() * ((noOfAlarmSubType+1)-1))+1;
+
+
+		alarmSubTypeProb = Math.random();
+		if(alarmSubTypeProb >= 0 & alarmSubTypeProb <= alarmSubTypeProb1)
+			pat[n].alarmSubType = 1;
+		if(alarmSubTypeProb1 >= 0.20 & alarmSubTypeProb2 <= 0.40)
+			pat[n].alarmSubType = 2;
+		if(alarmSubTypeProb2 >= 0.40 & alarmSubTypeProb3 <= 0.60)
+			pat[n].alarmSubType = 3;
+		if(alarmSubTypeProb3 >= 0.60 & alarmSubTypeProb4 <= 0.80)
+			pat[n].alarmSubType = 4;
+		if(alarmSubTypeProb >= alarmSubTypeProb4)
+			pat[n].alarmSubType = 5;
+
+		// Randomly we decide weather this new arrival event is technical or non technical in nature----------------GM
+		//Alarm Main type implementation - Technical or Non-Technical Alarm
+		if(Math.random() <= 0.175) {
+			pat[n].alarmMainType = "Technical"; //Technical alarm
+		}
+		else {
+			pat[n].alarmMainType = "Non Technical"; //NonTechnical alarm
+		}
+        // Randomly we decide weather this new arrival event is True or False alarm----------------GM
+		//Alarm Type Implementation - True or False Alarm
+		if(Math.random() <= 0.05) {
+				pat[n].alarmType = 0; //True alarm
+		} 
+		else {
+				pat[n].alarmType = 1; //False alarm
+		}
+		if(pat[n].alarmStatus == 1) { // False Alarm
+			//if((pat[NextEvent.PatientID].AlarmsServiced/ ((tnow-pat[NextEvent.PatientID].firstArrivalEvent) * 60 * 60)) < 0.004)
+			/*if((pat[NextEvent.PatientID].AlarmsServiced/ ((tnow-1) * 60 * 60)) < 0.004) {
+				pat[NextEvent.PatientID].alarmStatus = 0;
+				pat[NextEvent.PatientID].noOfFlipsToOn++;
+				pat[NextEvent.PatientID].TimeTurnedOff = pat[NextEvent.PatientID].TimeTurnedOff + tnow - pat[NextEvent.PatientID].SwitchOffTime;
+			}*/
+			// if it is more than switch on hours time ----------------------------------P
+			if(tnow - pat[n].SwitchOffTime >= SwitchOnHours) {
+				pat[n].alarmStatus = 0;
+				pat[n].noOfFlipsToOn++;
+				pat[n].TimeTurnedOff = pat[n].TimeTurnedOff + tnow - pat[n].SwitchOffTime;
+				//pat[n].SwitchOffTime = 100000; // to reset the time alarm was switched off// checkk------------P
+				
+			}
+		}
+		
+		System.out.println("Obj Type:" +EventObj.objsType);	
+		System.out.println("Obj Time:" +EventObj.objdTime);
+		//Finally after populating the event we add it to the event queue----------------------GM
+		eq.addEvent(EventObj); //Add the arrival event to the queue
+		return EventObj;
+	}
+	else {return null;}
+}
+
+
+
+
+/**
+ * This method is generate an end event class
+ * 
+ * 
+ * 
+ */
+
+private void generateEndEvent(EventQ eq)
+{
+	Event EventObj = new Event("end", endTime);
+	eq.addEvent(EventObj); //Add the end event to the queue	
+}
+
+
+/**
+ * This method is generate a new service event class but I do not use it here.
+ * 
+ * 
+ * 
+ */
+
+private double generateServiceTime(double mu, int type)
+{
+	double timeService = 1000;
+	if(type==1){
+	timeService = - (Math.log(1 - Math.random()) /  (0.5*mu)) ;
+	}
+	if(type==2){
+	timeService = - (Math.log(1 - Math.random()) /  mu) ;	
+	}
+	return timeService;
+}
+
+
+/**
+ * This method is generate the number of servers or arrival rate for that shift.
+ * 
+ * 
+ * 
+ */
+
+private double getn(int i, int j, ArrayList<ArrayList<Double>> ns)
+{
+	if(i>6){System.out.println("The Day is " +i );}
+	if(j>nperiods){System.out.println("The Shiftno is " +j );}	
+	return ns.get(j).get(i);
+}
+
+
+/**
+ * This method is to initialize the system
+ * 
+ * 
+ * 
+ */
+
+public void initialize()
+{
+	totalNoInSys = 0;
+	totalNoInSysSq = 0;
+	totalNoInQ = 0;
+	totalNoInQSq = 0;
+	noCustInSys = 0; //keep track of # of customers in system
+	noCustInQ = 0;
+	noServComp = 0; //keep track of # of service completions
+	noServAb = 0; //keep track of # of service abandonments
+	totalTimeInSys = 0; //keep track of time in system I will use it to find average time in system
+	totalTimeInSysSq = 0; //keep track of second moment of time in system
+	totalTimeInQ = 0;
+	noMeetTarget = 0; //keep track of # of customers meeting the waiting time target
+	tnow = 0;
+	CustomerIDCnt = 1; //and id for every customer
+	sysStatus = 0; //to check if the single server is busy
+	
+}
+
+/**
+ * This method updates the integral to find average number of customers in system
+ * 
+ * 
+ * 
+ */
+
+public void updateStats(double delta)
+{
+	totalNoInSys += (double) noCustInSys*delta; //this is for avg no in Sys
+	totalNoInSysSq += (double) Math.pow(noCustInSys,2)*delta; //this is for Var of no in Sys
+	totalNoInQ += (double) noCustInQ*delta; //this is for avg no in Sys
+	totalNoInQSq += (double) Math.pow(noCustInQ,2)*delta; //this is for Var of no in Sys
+	
+}
+
+/**
+ * This method is called when the next event is an arrival
+ * 
+ * 
+ * 
+ */
+public void arrivalEvent(PatientQ pq, Event NextEvent, EventQ eq, Nurse nur[], Patient pat[])
+{
+	System.out.println("Inside arrival event");
+	System.out.println("Number of Working nurse:"+noOfWorkingNurse);
+	System.out.println("Number of nurses:"+noOfNurse);
+	System.out.println("Patient Queue Size:"+pq.size());
+	// Here we allocate the nurse to the patient if available------------------------------GM
+	if(pq.size() == 0 && noOfWorkingNurse < noOfNurse-1)
+		{
+			int  n = rand.nextInt(noOfNurse);			
+			while(true) {
+				if (nur[n].nurseStatus == 1) {
+					n = rand.nextInt(noOfNurse);
+				}
+				else
+					break;			
+			}
+			
+			System.out.println("After while of picking nurse");
+			// here we process the arrival event whether its true or not , technical or not ---------------------GM
+            //we update our statistics accordingly and write it to the csv file-----------------------------GM
+            // at the end we generate a new departure event and add it to queue--------------------------GM
+			if(pat[NextEvent.PatientID].alarmType == 0) //True Alarm------
+			{
+				TrueAlarms++; // increment of true alarm-------------GM
+				pat[NextEvent.PatientID].noOfTrueAlarm++;
+				if(pat[NextEvent.PatientID].alarmMainType == "Technical") {
+					pat[NextEvent.PatientID].noOfTrueAlarmTech++;
+				}
+				else pat[NextEvent.PatientID].noOfTrueAlarmNonTech++;
+
+				if(pat[NextEvent.PatientID].alarmStatus == 1) //Alarm off
+				{
+					TrueAlarmMissed++;
+					Event EventObj = new Event("departure", NextEvent.objdTime);
+					EventObj.PatientID = NextEvent.PatientID;
+					eq.addEvent(EventObj);
+					
+				}
+				else
+				{
+
+					nur[n].nurseStatus = 1; //Nurse occupied //
+					pat[NextEvent.PatientID].NurseVisibleTA++;
+					noOfWorkingNurse++;
+					pat[NextEvent.PatientID].patientStatus = 1;
+					pat[NextEvent.PatientID].nurseid = n;
+					pat[NextEvent.PatientID].AlarmsServiced++;
+					pat[NextEvent.PatientID].serviceStartTime = NextEvent.objdTime;
+					pat[NextEvent.PatientID].departureTime = /*(- (Math.log(1 - Math.random()) /  10))*/ TrueAlarmProsTime +  pat[NextEvent.PatientID].serviceStartTime;
+					
+					if(((pat[NextEvent.PatientID].noOfFalseAlarm) / ((tnow-1) * 60 * 60)) > 0.004) {
+						pat[NextEvent.PatientID].alarmStatus = 1; // set alarm to off
+						pat[NextEvent.PatientID].noOfFlipsToOff++;
+						pat[NextEvent.PatientID].SwitchOffTime = tnow;
+					}
+					// generate departure event and add it to event queue---------------------------GM
+					Event EventObj = new Event("departure", pat[NextEvent.PatientID].departureTime);
+					EventObj.PatientID = NextEvent.PatientID;
+					eq.addEvent(EventObj);
+					
+				}
+			}
+			// same steps as above, but with false alarm case----------------------------GM
+			else if(pat[NextEvent.PatientID].alarmType == 1) //False Alarm----------
+			{
+				FalseAlarms++;
+				pat[NextEvent.PatientID].noOfFalseAlarm++;
+				
+				if(pat[NextEvent.PatientID].alarmMainType == "Technical") {
+					pat[NextEvent.PatientID].noOfFalseAlarmTech++;
+				}
+				else pat[NextEvent.PatientID].noOfFalseAlarmNonTech++;
+				
+				
+				if(pat[NextEvent.PatientID].alarmStatus == 1) //Alarm off
+				{
+					DodgedFalseAlarm++;
+					Event EventObj = new Event("departure", NextEvent.objdTime);
+					EventObj.PatientID = NextEvent.PatientID;
+					eq.addEvent(EventObj);
+				}
+				else
+				{
+					FalseAlarmsServiced++;
+					nur[n].nurseStatus = 1; //Nurse occupied
+					pat[NextEvent.PatientID].NurseVisibleFA++;
+					noOfWorkingNurse++;
+					pat[NextEvent.PatientID].patientStatus = 1;
+					pat[NextEvent.PatientID].AlarmsServiced++;
+					pat[NextEvent.PatientID].nurseid = n;
+					pat[NextEvent.PatientID].serviceStartTime = NextEvent.objdTime;
+					pat[NextEvent.PatientID].departureTime = /*(- (Math.log(1 - Math.random()) /  20))*/ FalseAlarmProsTime +  pat[NextEvent.PatientID].serviceStartTime;
+					Event EventObj = new Event("departure", pat[NextEvent.PatientID].departureTime);
+					EventObj.PatientID = NextEvent.PatientID;
+					eq.addEvent(EventObj);
+					if(((pat[NextEvent.PatientID].noOfFalseAlarm) / ((tnow-1) * 60 * 60)) > 0.004) { /*False alarm threshold*/
+						pat[NextEvent.PatientID].alarmStatus = 1; //set alarm to off
+						pat[NextEvent.PatientID].noOfFlipsToOff++;
+						pat[NextEvent.PatientID].SwitchOffTime = tnow;
+					}
+					
+				}
+				
+			}
+			
+		}
+    // if no nurse available than we add the new event to the patient queue---------------------------GM
+    //and next patient we will selected based on arrival time----------------------GM
+	else {
+		pq.enqueue(NextEvent);
+		noPatInQ++;
+	}
+	System.out.println("PatientID is:" +NextEvent.PatientID);
+	//at the end we are generating another arrival event---------------------------GM
+	generateArrivalEvent(eq,pat);
+}
+
+
+/**
+ * This method is called when the next event is a departure
+ * 
+ * 
+ * 
+ */
+//different for H1
+// here we are populating all the stats for the departure event------------------------------GM
+//at the end of every departure event we create another departure event and add it to event queue----------------GM------ why??????
+public void departureEvent(PatientQ pq, Event NextEvent, EventQ eq, File patFile, WritetoCSV loWriteToCSV, Nurse nur[], Patient pat[])
+{
+	System.out.println("Inside departure event");
+	int pId = NextEvent.PatientID;
+	double timeInSys = tnow - pat[pId].arrivalTime;
+	pat[pId].departureTime = tnow;
+	pat[pId].timeinsystem = timeInSys;
+	//loWriteToCSV.generateCsvFile(tday,pId,pat[pId].patientStatus,pat[pId].arrivalTime,pat[pId].alarmStatus,pat[pId].alarmType,pat[pId].alarmMainType,pat[pId].alarmSubType,pat[pId].noOfTrueAlarmTech,pat[pId].noOfFalseAlarmTech,pat[pId].noOfTrueAlarmNonTech,pat[pId].noOfFalseAlarmNonTech,pat[pId].timeinqueue,pat[pId].departureTime,pat[pId].SwitchOffTime,pat[pId].noOfFalseAlarm,pat[pId].noOfTrueAlarm,pat[pId].nurseid,pat[pId].NurseVisibleTA,pat[pId].NurseVisibleFA,pat[pId].noOfFlipsToOn,pat[pId].noOfFlipsToOff,pat[pId].timeinsystem,patFile);
+	// loWriteToCSV.generateCsvFileCust(day, shiftno, n, lambda, c, custFile); //you can also create a string variable and write the string variable in the end
+	//We dont have target now can add it later if needed
+	//if(c.timeinqueue<= targetWait)	noMeetTarget++;
+	//noCustInSys--; //1 less customer
+	noServComp++; //one more service completion
+	totalTimeInSys += timeInSys;
+	totalTimeInSysSq += (timeInSys*timeInSys);
+	pat[pId].patientStatus = 0;
+	int nId = pat[pId].nurseid;
+	if(timeInSys > 0) {
+		noOfWorkingNurse--;
+		nur[nId].nurseStatus = 0;
+	}
+		
+	// totalTimeInQ += c.timeinqueue;
+	//int nId = pat[pId].nurseid;
+	//nur[nId].nurseStatus = 0;
+	
+	if(pq.size() > 0) {
+		if(pq.size() > maxNoOfAlarmsInQ) {
+			maxNoOfAlarmsInQ = pq.size();
+		}
+		System.out.println("Before selecting nurse in departure");
+		System.out.println("After selecting nurse in departure");
+		NextEvent = (Event) pq.dequeue();
+		pId = NextEvent.PatientID;
+		noServComp++;
+		pat[pId].timeinqueue = pat[pId].timeinqueue + tnow - pat[pId].arrivalTime;
+		pat[pId].noOfTimesInQueue++;
+		if(pat[pId].alarmType == 0) //True Alarm--------------------------------
+		{
+			TrueAlarms++;
+			pat[pId].noOfTrueAlarm++;
+			
+			if(pat[pId].alarmMainType == "Technical") {
+				pat[pId].noOfTrueAlarmTech++;
+			}
+			else pat[pId].noOfTrueAlarmNonTech++;
+			
+			if(pat[pId].alarmStatus == 1) //Alarm off
+			{
+				TrueAlarmMissed++;
+				Event EventObj = new Event("departure", NextEvent.objdTime);
+				EventObj.PatientID = NextEvent.PatientID;
+				eq.addEvent(EventObj);
+			}
+			else
+			{
+				nur[nId].nurseStatus = 1; //Nurse occupied
+				pat[pId].NurseVisibleTA++;
+				noOfWorkingNurse++;
+				pat[pId].patientStatus = 1;
+				pat[pId].nurseid = nId;
+				pat[pId].AlarmsServiced++;
+				pat[pId].serviceStartTime = NextEvent.objdTime;
+				pat[pId].departureTime = /*(- (Math.log(1 - Math.random()) /  10))*/ TrueAlarmProsTime +  pat[pId].serviceStartTime;
+				
+				if(((pat[pId].noOfFalseAlarm) / ((tnow-1) * 60 * 60)) > 0.004) { /*False alarm threshold*/
+					pat[pId].alarmStatus = 1;
+					pat[pId].noOfFlipsToOff++;
+					pat[pId].SwitchOffTime = tnow;
+				}
+				
+				Event EventObj = new Event("departure", pat[pId].departureTime);
+				EventObj.PatientID = pId;
+				eq.addEvent(EventObj);
+				
+			}
+		}
+		else if(pat[pId].alarmType == 1) //False Alarm_-------------------------------------------
+		{
+			FalseAlarms++;
+			pat[pId].noOfFalseAlarm++;
+			
+			if(pat[pId].alarmMainType == "Technical") {
+				pat[pId].noOfFalseAlarmTech++;
+			}
+			else pat[pId].noOfFalseAlarmNonTech++;
+			
+			if(pat[pId].alarmStatus == 1) //Alarm off
+			{
+				DodgedFalseAlarm++;
+				Event EventObj = new Event("departure", NextEvent.objdTime);
+				EventObj.PatientID = NextEvent.PatientID;
+				eq.addEvent(EventObj);
+			}
+			else
+			{
+				FalseAlarmsServiced++;
+				nur[nId].nurseStatus = 1; //Nurse occupied
+				pat[pId].NurseVisibleFA++;
+				pat[pId].patientStatus = 1;
+				noOfWorkingNurse++;
+				pat[pId].AlarmsServiced++;
+				pat[pId].nurseid = nId;
+				pat[pId].serviceStartTime = NextEvent.objdTime;
+				pat[pId].departureTime = /*(- (Math.log(1 - Math.random()) /  20))*/ FalseAlarmProsTime +  pat[pId].serviceStartTime;
+				Event EventObj = new Event("departure", pat[pId].departureTime);
+				EventObj.PatientID = pId;
+				eq.addEvent(EventObj);
+				if(((pat[pId].noOfFalseAlarm) / ((tnow-1) * 60 * 60)) > 0.004) {
+					pat[pId].alarmStatus = 1;
+					pat[pId].noOfFlipsToOff++;
+					pat[pId].SwitchOffTime = tnow;
+				}
+				
+			}
+			
+		}
+		
+		
+	}
+	// else sysStatus--;
+
+}
+
+
+/*public void removeEvent(Customer c, CustomerQ cq)
+{
+int i=0;
+while (i < cq.size()) {
+	Event ch = cq.getithevent(i);
+	Customer chcust = ch.customer;
+	if (chcust.arrivalTime == c.arrivalTime){
+		cq.eraseEventAti(i);
+		break;	
+	}
+i ++;
+}
+
+} */
+
+
+
+
+/**
+ * Calculate some final stats and print
+ * 
+ * 
+ * 
+ */
+/*public void StatsPrint()
+{
+//Print the update status
+System.out.println("# of Service Completions = " + noServComp);
+System.out.println("# of Service Abandonments = " + noServAb);
+//avg time in system for those who completed service
+avgTimeInsystem = totalTimeInSys/noServComp;
+//second moment for time in system for those who completed service
+double secondMomentTimeInsystem = totalTimeInSysSq/noServComp;	
+//Variance of time in system
+varTimeInsystem = secondMomentTimeInsystem - Math.pow(avgTimeInsystem,2);
+//avg time in queue for those who completed service
+avgTimeInQ = totalTimeInQ/noServComp;
+//avg number of customers in system
+avgNumberInSystem = totalNoInSys / endTime;
+//Var number of customers in system
+varNumberInSystem = totalNoInSysSq / endTime;
+//avg number of customers in queue
+avgNumberInQ = totalNoInQ / endTime;
+//Var number of customers in queue
+varNumberInQ = totalNoInQSq / endTime;
+double totalcust = noServComp + noServAb;
+percmeetTarget = noMeetTarget / totalcust;
+//You can also display other statistics
+System.out.println("Avg. time in system= " +avgTimeInsystem);
+System.out.println("Variance of time in system= " +varTimeInsystem);
+System.out.println("Avg. time in queue= " +avgTimeInQ);
+System.out.println("Avg number in system= " +avgNumberInSystem);	
+System.out.println("Var number in system= " +varNumberInSystem);
+System.out.println("Avg number in queue= " +avgNumberInQ);
+System.out.println("Var number in queue= " +varNumberInQ);
+System.out.println("Number of customers who met the waiting time target = " +noMeetTarget);
+System.out.println("Percentage of customers who met the target with =" +percmeetTarget );
+}*/
+
+}
